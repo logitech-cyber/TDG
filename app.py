@@ -10,7 +10,7 @@ from huggingface_hub import hf_hub_download
 
 # --- Configuración de Hugging Face Hub ---
 # ¡IMPORTANTE!: Reemplaza "tu_usuario/nombre_de_tu_repo_modelos" con el ID real de tu repositorio en Hugging Face
-HF_REPO_ID = "tu_usuario/mis-modelos-emociones" 
+HF_REPO_ID = "branddiego/model_valence_arousal" 
 
 # Nombres de los archivos de los modelos en el repositorio de Hugging Face
 MODEL_AROUSAL_FILENAME = "modelo_arousal_random_forest_todas_caracteristicas.joblib"
@@ -30,7 +30,7 @@ def load_single_model_from_hf(repo_id, filename, token=None):
         model_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
-            token=token # Esto es útil si tu repo HF es privado
+            token=None # Esto es útil si tu repo HF es privado
         )
         componentes = joblib.load(model_path)
         st.success(f"{filename} cargado con éxito.")
@@ -151,7 +151,7 @@ if uploaded_file is not None:
                 arousal_model_components = load_single_model_from_hf(
                     HF_REPO_ID, 
                     MODEL_AROUSAL_FILENAME, 
-                    st.secrets.get("HF_TOKEN")
+                    token=None
                 )
                 
                 # Realizar predicción de Arousal
@@ -177,7 +177,7 @@ if uploaded_file is not None:
                 valence_model_components = load_single_model_from_hf(
                     HF_REPO_ID, 
                     MODEL_VALENCE_FILENAME, 
-                    st.secrets.get("HF_TOKEN")
+                    token=None
                 )
 
                 # Realizar predicción de Valence
