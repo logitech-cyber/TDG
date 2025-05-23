@@ -1,8 +1,8 @@
-streamlit==1.30.0
-pandas
-numpy
-scikit-learn==1.5.2 
-joblib==1.3.2
-matplotlib
-seaborn
+streamlit  # Mantenemos esta si tu app funciona con ella
+pandas==2.2.3      # Actualizar a la versión instalada en el log
+numpy==1.26.4      # Actualizar a la versión instalada en el log
+scikit-learn==1.5.2 # Mantener esta versión que ya sabes que funciona con tus modelos
+joblib==1.3.2      # Mantener esta versión
+matplotlib==3.10.3 # Actualizar a la versión instalada en el log
+seaborn==0.13.2    # Actualizar a la versión instalada en el log
 huggingface_hub
