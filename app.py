@@ -6,29 +6,31 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 from io import StringIO
-from huggingface_hub import hf_hub_download # Importa hf_hub_download
+from huggingface_hub import hf_hub_download
 
 # --- Configuración de Hugging Face Hub ---
 # ¡IMPORTANTE!: Reemplaza "tu_usuario/nombre_de_tu_repo_modelos" con el ID real de tu repositorio en Hugging Face
-HF_REPO_ID = "branddiego/model_valence_arousal" 
+HF_REPO_ID = "tu_usuario/mis-modelos-emociones" 
 
 # Nombres de los archivos de los modelos en el repositorio de Hugging Face
 MODEL_AROUSAL_FILENAME = "modelo_arousal_random_forest_todas_caracteristicas.joblib"
 MODEL_VALENCE_FILENAME = "modelo_valence_random_forest_todas_caracteristicas.joblib"
 
-# --- Función para cargar modelos desde Hugging Face Hub ---
-@st.cache_resource
-def load_model_from_hf(repo_id, filename, token=None):
+# --- Función para cargar un único modelo desde Hugging Face Hub ---
+# Usamos st.cache_data aquí porque queremos que el modelo se almacene en caché una vez
+# que se carga, pero podemos controlar cuándo se llama.
+@st.cache_data(show_spinner=False) # show_spinner=False para controlar el spinner manualmente
+def load_single_model_from_hf(repo_id, filename, token=None):
     """
-    Descarga un modelo (o un componente joblib) desde Hugging Face Hub y lo carga.
-    Utiliza st.cache_resource para asegurar que la descarga y carga solo ocurra una vez.
+    Descarga un único modelo (o un componente joblib) desde Hugging Face Hub y lo carga.
+    Utiliza st.cache_data para asegurar que la descarga y carga solo ocurra una vez por modelo.
     """
-    st.info(f"Cargando {filename} desde Hugging Face Hub (se hará solo una vez)...")
+    st.info(f"Cargando {filename} desde Hugging Face Hub...")
     try:
         model_path = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
-            token=None # Esto es útil si tu repo HF es privado
+            token=token # Esto es útil si tu repo HF es privado
         )
         componentes = joblib.load(model_path)
         st.success(f"{filename} cargado con éxito.")
@@ -38,79 +40,44 @@ def load_model_from_hf(repo_id, filename, token=None):
         st.warning("Asegúrate de que el HF_REPO_ID es correcto y los modelos existen en el repositorio. Si es un repo privado, verifica el token.")
         st.stop() # Detiene la ejecución de la app si no se pueden cargar los modelos
 
-# --- Cargar modelos al inicio de la aplicación ---
-# Usamos st.secrets.get("HF_TOKEN") para obtener el token de Hugging Face de forma segura,
-# si tu repositorio es privado. Si es público, puedes pasar token=None.
-arousal_model_components = load_model_from_hf(
-    HF_REPO_ID, 
-    MODEL_AROUSAL_FILENAME, 
-    token=None # No pases un token si el repositorio es público
-)
-valence_model_components = load_model_from_hf(
-    HF_REPO_ID, 
-    MODEL_VALENCE_FILENAME, 
-    token=None # No pases un token si el repositorio es público
-)
+# NO cargar modelos al inicio del script. Se cargarán bajo demanda.
+# arousal_model_components = load_model_from_hf(...)
+# valence_model_components = load_model_from_hf(...)
 
-# Título y descripción de la aplicación
-st.title("Predictor de Emociones Musicales")
-st.markdown("Utiliza modelos de machine learning para predecir arousal y valence en muestras musicales")
 
-# La función `predecir_emocion_desde_csv` ya no necesita la `ruta_modelo`,
-# sino los componentes del modelo directamente.
+# --- Función para predecir emociones (adaptada) ---
 def predecir_emocion_desde_csv(df, componentes_modelo, columna_id=None):
     """
     Predice arousal/valence a partir de un DataFrame con características extraídas
     utilizando componentes del modelo directamente (modelo, scaler, caracteristicas).
-
-    Parámetros:
-    -----------
-    df : pandas.DataFrame
-        DataFrame con las características extraídas
-    componentes_modelo : dict
-        Diccionario que contiene 'modelo', 'scaler' y 'caracteristicas' del modelo.
-    columna_id : str, opcional
-        Nombre de la columna que contiene identificadores (si existe)
-
-    Retorna:
-    --------
-    pandas.DataFrame: Predicciones con identificadores (si se proporcionaron)
     """
-    # 1. Extraer el modelo y componentes del diccionario
     modelo = componentes_modelo['modelo']
     scaler = componentes_modelo['scaler']
     caracteristicas_modelo = componentes_modelo['caracteristicas']
 
-    with st.spinner("Preparando características para predicción..."):
-        # Verificar si todas las características necesarias están presentes
-        caracteristicas_faltantes = set(caracteristicas_modelo) - set(df.columns)
-        if caracteristicas_faltantes:
-            st.warning(f"Faltan {len(caracteristicas_faltantes)} características en el CSV.")
-            if len(caracteristicas_faltantes) <= 5:
-                st.warning(f"Características faltantes: {caracteristicas_faltantes}")
-            else:
-                st.warning(f"Primeras 5 faltantes: {list(caracteristicas_faltantes)[:5]}")
+    st.write("Preparando características para predicción...")
+    # Verificar si todas las características necesarias están presentes
+    caracteristicas_faltantes = set(caracteristicas_modelo) - set(df.columns)
+    if caracteristicas_faltantes:
+        st.warning(f"Faltan {len(caracteristicas_faltantes)} características en el CSV.")
+        if len(caracteristicas_faltantes) <= 5:
+            st.warning(f"Características faltantes: {caracteristicas_faltantes}")
+        else:
+            st.warning(f"Primeras 5 faltantes: {list(caracteristicas_faltantes)[:5]}")
+        
+        # Rellenar con ceros si faltan características
+        for caract in caracteristicas_faltantes:
+            st.warning(f"La característica '{caract}' no se encontró en el CSV. Se rellenará con ceros.")
+            df[caract] = np.zeros(len(df))
 
-        # Crear DataFrame con características en el orden correcto
-        datos_pred = {}
-        for caract in caracteristicas_modelo:
-            if caract in df.columns:
-                datos_pred[caract] = df[caract].values
-            else:
-                # Si una característica falta, rellenar con ceros (o con la media/mediana adecuada)
-                # OJO: Si muchas características faltan, esto puede afectar la predicción
-                st.warning(f"La característica '{caract}' no se encontró en el CSV. Se rellenará con ceros.")
-                datos_pred[caract] = np.zeros(len(df))
+    # Crear DataFrame con características en el orden correcto
+    X_pred = df[caracteristicas_modelo] # Ahora que rellenamos df, podemos hacer esto directamente
+    
+    # Escalar características
+    X_scaled = scaler.transform(X_pred)
 
-        # Crear DataFrame de una sola vez
-        X_pred = pd.DataFrame(datos_pred)
-
-        # Escalar características
-        X_scaled = scaler.transform(X_pred)
-
-    # Realizar predicciones
-    with st.spinner("Realizando predicciones..."):
-        predicciones = modelo.predict(X_scaled)
+    st.write("Realizando predicciones...")
+    predicciones = modelo.predict(X_scaled)
 
     # Crear DataFrame de resultados
     if columna_id is not None and columna_id in df.columns:
@@ -122,17 +89,13 @@ def predecir_emocion_desde_csv(df, componentes_modelo, columna_id=None):
         resultados = pd.DataFrame({
             'prediccion': predicciones
         })
-
-    # Determinar tipo de emoción basado en el nombre del archivo original (usado como proxy aquí)
-    # Ya que los modelos están cargados en variables específicas (arousal_model_components, valence_model_components),
-    # podemos usar ese conocimiento directamente.
-    
-    # Para saber si es arousal o valence, podemos pasar un parámetro adicional a la función
-    # o inferirlo de alguna manera. Aquí lo haremos basándonos en cómo se llama la función.
-    # Por ahora, la inferencia se hará al llamar a la función en la parte principal del script.
     
     return resultados
 
+
+# Título y descripción de la aplicación
+st.title("Predictor de Emociones Musicales")
+st.markdown("Utiliza modelos de machine learning para predecir arousal y valence en muestras musicales")
 
 # Crear secciones para la aplicación
 st.header("1. Cargar archivo CSV con características")
@@ -144,7 +107,8 @@ if uploaded_file is not None:
     # Mostrar proceso de carga
     with st.spinner('Cargando y procesando archivo...'):
         # Leer el archivo cargado
-        df = pd.read_csv(uploaded_file, delimiter=';')
+        df_original = pd.read_csv(uploaded_file, delimiter=';') # Guardamos el original
+        df = df_original.copy() # Trabajamos con una copia para evitar modificar el original
         
         # Mostrar información del archivo
         st.success(f"Archivo cargado correctamente: {uploaded_file.name}")
@@ -165,105 +129,137 @@ if uploaded_file is not None:
         if columna_id is None:
             st.warning("No se detectó una columna de identificación. Las predicciones se numerarán secuencialmente.")
     
-    # Sección para seleccionar modelos
-    st.header("2. Modelos cargados")
-    st.info(f"Los modelos de Arousal y Valence han sido cargados desde el repositorio: `{HF_REPO_ID}`")
-    st.write(f"- **Modelo Arousal**: `{MODEL_AROUSAL_FILENAME}`")
-    st.write(f"- **Modelo Valence**: `{MODEL_VALENCE_FILENAME}`")
+    # Sección para seleccionar el tipo de predicción
+    st.header("2. Realizar Predicciones")
     
-    # Botón para iniciar predicciones
-    if st.button("Realizar Predicciones"):
-        st.header("3. Resultados de Predicciones")
+    # Usamos st.session_state para mantener los resultados entre ejecuciones
+    if 'resultados_arousal' not in st.session_state:
+        st.session_state['resultados_arousal'] = None
+    if 'resultados_valence' not in st.session_state:
+        st.session_state['resultados_valence'] = None
+    if 'resultados_combinados' not in st.session_state:
+        st.session_state['resultados_combinados'] = None
+
+    # Opciones de botones para cada predicción
+    col_pred1, col_pred2 = st.columns(2)
+
+    with col_pred1:
+        if st.button("Predecir Arousal"):
+            st.subheader("Predicción de Arousal")
+            with st.spinner("Cargando modelo de Arousal y realizando predicciones..."):
+                # Cargar el modelo de Arousal solo cuando se presiona el botón
+                arousal_model_components = load_single_model_from_hf(
+                    HF_REPO_ID, 
+                    MODEL_AROUSAL_FILENAME, 
+                    st.secrets.get("HF_TOKEN")
+                )
+                
+                # Realizar predicción de Arousal
+                resultados_arousal_temp = predecir_emocion_desde_csv(
+                    df.copy(), # Pasamos una copia para evitar side-effects
+                    arousal_model_components,
+                    columna_id
+                )
+                resultados_arousal_temp.rename(columns={'prediccion': 'arousal'}, inplace=True)
+                st.session_state['resultados_arousal'] = resultados_arousal_temp
+                st.success("Predicción de Arousal completada.")
+                st.dataframe(st.session_state['resultados_arousal']) # Mostrar resultados parciales
+
+            # Liberar explícitamente el modelo de arousal si es posible (Python GC lo manejará)
+            # del arousal_model_components # Esto intenta liberar la memoria, pero st.cache_data podría mantenerla.
+            # import gc; gc.collect() # Fuerza la recolección de basura, pero no garantiza liberación inmediata de caché.
+
+    with col_pred2:
+        if st.button("Predecir Valence"):
+            st.subheader("Predicción de Valence")
+            with st.spinner("Cargando modelo de Valence y realizando predicciones..."):
+                # Cargar el modelo de Valence solo cuando se presiona el botón
+                valence_model_components = load_single_model_from_hf(
+                    HF_REPO_ID, 
+                    MODEL_VALENCE_FILENAME, 
+                    st.secrets.get("HF_TOKEN")
+                )
+
+                # Realizar predicción de Valence
+                resultados_valence_temp = predecir_emocion_desde_csv(
+                    df.copy(), # Pasamos una copia para evitar side-effects
+                    valence_model_components,
+                    columna_id
+                )
+                resultados_valence_temp.rename(columns={'prediccion': 'valence'}, inplace=True)
+                st.session_state['resultados_valence'] = resultados_valence_temp
+                st.success("Predicción de Valence completada.")
+                st.dataframe(st.session_state['resultados_valence']) # Mostrar resultados parciales
+            
+            # del valence_model_components
+            # import gc; gc.collect()
+
+    # Si ambos resultados están disponibles, combinarlos y mostrar la visualización
+    if st.session_state['resultados_arousal'] is not None and st.session_state['resultados_valence'] is not None:
+        st.header("3. Resultados Combinados y Visualización")
+        if columna_id:
+            st.session_state['resultados_combinados'] = st.session_state['resultados_arousal'].merge(
+                st.session_state['resultados_valence'], on='ID'
+            )
+        else:
+            # Si no hay ID, asumir mismo orden y combinar
+            st.session_state['resultados_combinados'] = st.session_state['resultados_arousal'].copy()
+            st.session_state['resultados_combinados']['valence'] = st.session_state['resultados_valence']['valence']
+
+        # Mostrar estadísticas
+        st.subheader("Estadísticas de predicciones")
+        col_stats1, col_stats2 = st.columns(2)
         
-        try:
-            # Predicción de arousal
-            with st.spinner("Realizando predicciones de Arousal..."):
-                resultados_arousal = predecir_emocion_desde_csv(
-                    df, 
-                    arousal_model_components, # Pasamos los componentes cargados
-                    columna_id
-                )
-            resultados_arousal.rename(columns={'prediccion': 'arousal'}, inplace=True)
-            
-            # Predicción de valence
-            with st.spinner("Realizando predicciones de Valence..."):
-                resultados_valence = predecir_emocion_desde_csv(
-                    df, 
-                    valence_model_components, # Pasamos los componentes cargados
-                    columna_id
-                )
-            resultados_valence.rename(columns={'prediccion': 'valence'}, inplace=True)
-            
-            # Combinar resultados
-            if columna_id:
-                resultados_combinados = resultados_arousal.merge(
-                    resultados_valence, on='ID'
-                )
-            else:
-                # Si no hay ID, asumir mismo orden
-                resultados_combinados = resultados_arousal.copy()
-                resultados_combinados['valence'] = resultados_valence['valence']
-            
-            # Mostrar estadísticas
-            st.subheader("Estadísticas de predicciones")
-            col_stats1, col_stats2 = st.columns(2)
-            
-            with col_stats1:
-                st.metric("Media de Arousal", f"{resultados_combinados['arousal'].mean():.4f}")
-                st.metric("Mínimo de Arousal", f"{resultados_combinados['arousal'].min():.4f}")
-                st.metric("Máximo de Arousal", f"{resultados_combinados['arousal'].max():.4f}")
-            
-            with col_stats2:
-                st.metric("Media de Valence", f"{resultados_combinados['valence'].mean():.4f}")
-                st.metric("Mínimo de Valence", f"{resultados_combinados['valence'].min():.4f}")
-                st.metric("Máximo de Valence", f"{resultados_combinados['valence'].max():.4f}")
-            
-            # Mostrar resultados en tabla
-            st.subheader("Tabla de Predicciones")
-            st.dataframe(resultados_combinados)
-            
-            # Visualización
-            st.subheader("Visualización de Predicciones")
-            
-            # Crear visualización
-            fig, ax = plt.subplots(figsize=(10, 6))
-            scatter = sns.scatterplot(
-                x='valence', 
-                y='arousal', 
-                data=resultados_combinados,
-                alpha=0.7,
-                ax=ax
-            )
-            
-            # Añadir líneas de referencia
-            ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
-            ax.axvline(x=0.5, color='gray', linestyle='--', alpha=0.5)
-            
-            # Etiquetas
-            plt.xlabel('Valence', fontsize=12)
-            plt.ylabel('Arousal', fontsize=12)
-            plt.title('Mapa Emocional: Arousal vs Valence', fontsize=14)
-            
-            # Añadir etiquetas a los cuadrantes
-            plt.text(0.25, 0.75, 'Tenso', fontsize=12, ha='center')
-            plt.text(0.75, 0.75, 'Alegre', fontsize=12, ha='center')
-            plt.text(0.25, 0.25, 'Triste', fontsize=12, ha='center')
-            plt.text(0.75, 0.25, 'Calmado', fontsize=12, ha='center')
-            
-            st.pyplot(fig)
-            
-            # Opción para descargar resultados
-            csv = resultados_combinados.to_csv(index=False)
-            st.download_button(
-                label="Descargar predicciones como CSV",
-                data=csv,
-                file_name="predicciones_emocionales.csv",
-                mime="text/csv",
-            )
-            
-        except Exception as e:
-            st.error(f"Error al realizar predicciones: {str(e)}")
-            st.exception(e)
+        with col_stats1:
+            st.metric("Media de Arousal", f"{st.session_state['resultados_combinados']['arousal'].mean():.4f}")
+            st.metric("Mínimo de Arousal", f"{st.session_state['resultados_combinados']['arousal'].min():.4f}")
+            st.metric("Máximo de Arousal", f"{st.session_state['resultados_combinados']['arousal'].max():.4f}")
+        
+        with col_stats2:
+            st.metric("Media de Valence", f"{st.session_state['resultados_combinados']['valence'].mean():.4f}")
+            st.metric("Mínimo de Valence", f"{st.session_state['resultados_combinados']['valence'].min():.4f}")
+            st.metric("Máximo de Valence", f"{st.session_state['resultados_combinados']['valence'].max():.4f}")
+        
+        # Mostrar resultados en tabla
+        st.subheader("Tabla de Predicciones Combinadas")
+        st.dataframe(st.session_state['resultados_combinados'])
+        
+        # Visualización
+        st.subheader("Visualización de Predicciones")
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        sns.scatterplot(
+            x='valence', 
+            y='arousal', 
+            data=st.session_state['resultados_combinados'],
+            alpha=0.7,
+            ax=ax
+        )
+        
+        ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.5)
+        ax.axvline(x=0.5, color='gray', linestyle='--', alpha=0.5)
+        
+        plt.xlabel('Valence', fontsize=12)
+        plt.ylabel('Arousal', fontsize=12)
+        plt.title('Mapa Emocional: Arousal vs Valence', fontsize=14)
+        
+        plt.text(0.25, 0.75, 'Tenso', fontsize=12, ha='center')
+        plt.text(0.75, 0.75, 'Alegre', fontsize=12, ha='center')
+        plt.text(0.25, 0.25, 'Triste', fontsize=12, ha='center')
+        plt.text(0.75, 0.25, 'Calmado', fontsize=12, ha='center')
+        
+        st.pyplot(fig)
+        
+        # Opción para descargar resultados
+        csv = st.session_state['resultados_combinados'].to_csv(index=False)
+        st.download_button(
+            label="Descargar predicciones como CSV",
+            data=csv,
+            file_name="predicciones_emocionales.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("Presiona 'Predecir Arousal' y luego 'Predecir Valence' para ver los resultados combinados y la visualización.")
 
 # Agregar información adicional
 with st.sidebar:
@@ -278,10 +274,10 @@ with st.sidebar:
     
     ### Instrucciones
     
-    1. Sube un archivo CSV con las características extraídas de tus muestras musicales
-    2. Los modelos de predicción se cargarán automáticamente desde Hugging Face Hub.
-    3. Haz clic en "Realizar Predicciones"
-    4. Explora los resultados y descarga las predicciones
+    1. Sube un archivo CSV con las características extraídas de tus muestras musicales.
+    2. Haz clic en "Predecir Arousal".
+    3. Luego, haz clic en "Predecir Valence".
+    4. Explora los resultados y descarga las predicciones combinadas.
     
     ### Requisitos del CSV
     
